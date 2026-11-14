@@ -1,13 +1,14 @@
 // مركز معطيات المؤسسة — Cloudflare Worker + Workers KV
 // كل مؤسسة تُحدَّد بالرقم الميكانوغرافي: سجل مستقل لكل مؤسسة، لا تداخل.
-// القراءة مفتوحة لمن يعرف الرقم الميكانوغرافي؛ الرفع والحذف بالتوكن فقط.
+// القراءة مفتوحة لمن يعرف الرقم الميكانوغرافي.
+// الكتابة: أول من يرفع سجلًا جديدًا يثبّت رمزه عليه (hash) — ما بعد ذلك لا يكتب فيه
+// إلا صاحب الرمز نفسه أو توكن المدير (HUB_TOKEN) الذي يتجاوز كل السجلات.
+// قائمة المؤسسات (/api/orgs) محمية بتوكن المدير حتى لا تُكشف أرقام المؤسسات.
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Hub-Token',
-  'Access-Control-Max-Age': '86400',
-};
+async function sha256hex(s) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 // تطبيع الرقم الميكانوغرافي: حروف/أرقام/شرطات/شرطة سفلية/نقاط، 3-32
 function normalizeMecano(raw) {
@@ -27,8 +28,12 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    // قائمة المؤسسات المسجلة (للوحة البوابة)
+    // قائمة المؤسسات المسجلة — بتوكن المدير فقط (لا تُكشف أرقام المؤسسات علنًا)
     if (url.pathname === '/api/orgs' && request.method === 'GET') {
+      const token = request.headers.get('X-Hub-Token') || url.searchParams.get('token') || '';
+      if (!env.HUB_TOKEN || token !== env.HUB_TOKEN) {
+        return json({ ok: false, error: 'قائمة المؤسسات متاحة لمدير المركز فقط' }, 401);
+      }
       const list = await env.INFO.list({ prefix: 'info:' });
       const orgs = [];
       for (const k of list.keys) {
@@ -60,10 +65,28 @@ export default {
       return json({ ok: true, mecano, info: data, updatedAt: data._updatedAt || null });
     }
 
-    // الكتابة والحذف: بالتوكن
+    // الكتابة والحذف: توكن صاحب السجل أو توكن المدير
     const token = request.headers.get('X-Hub-Token') || url.searchParams.get('token') || '';
-    if (!env.HUB_TOKEN || token !== env.HUB_TOKEN) {
+    if (!env.HUB_TOKEN || !token) {
       return json({ ok: false, error: 'توكن غير صحيح أو مفقود' }, 401);
+    }
+    const isMaster = token === env.HUB_TOKEN;
+    const authHash = await env.INFO.get('auth:' + mecano);
+
+    if (!isMaster) {
+      if (authHash) {
+        // السجل مملوك: الرمز يجب أن يطابق hash مالكه
+        const provided = await sha256hex(token);
+        if (provided !== authHash) {
+          return json({ ok: false, error: 'هذا السجل مملوك لمؤسسة أخرى — الكتابة فيه برمز مختلف مرفوضة', owned: true }, 403);
+        }
+      } else {
+        // سجل جديد: أول رفع يثبّت رمز مالكه
+        await env.INFO.put('auth:' + mecano, await sha256hex(token));
+      }
+    } else if (!authHash) {
+      // المدير ينشئ سجلًا جديدًا: يثبّت ملكيته عليه
+      await env.INFO.put('auth:' + mecano, await sha256hex(token));
     }
 
     if (request.method === 'PUT') {
@@ -86,9 +109,11 @@ export default {
 
     if (request.method === 'DELETE') {
       await env.INFO.delete('info:' + mecano);
+      await env.INFO.delete('auth:' + mecano);
       return json({ ok: true, mecano, deleted: true });
     }
 
     return json({ ok: false, error: 'طريقة غير مدعومة' }, 405);
   },
 };
+
