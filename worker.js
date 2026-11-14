@@ -5,6 +5,13 @@
 // إلا صاحب الرمز نفسه أو توكن المدير (HUB_TOKEN) الذي يتجاوز كل السجلات.
 // قائمة المؤسسات (/api/orgs) محمية بتوكن المدير حتى لا تُكشف أرقام المؤسسات.
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Hub-Token',
+  'Access-Control-Max-Age': '86400',
+};
+
 async function sha256hex(s) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
