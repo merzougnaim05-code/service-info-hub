@@ -1,0 +1,7 @@
+name = "service-info-hub"
+main = "worker.js"
+compatibility_date = "2024-12-01"
+
+[[kv_namespaces]]
+binding = "INFO"
+id = "dcf6eaf3358f4d60a382b752e6e1033e"
