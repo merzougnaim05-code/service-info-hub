@@ -80,6 +80,12 @@ export default {
       }
     }
 
+    // حذف السجل: مفتوح مثل النشر (نفس مستوى الثقة)
+    if (request.method === 'DELETE') {
+      await env.INFO.delete('info:' + mecano);
+      return json({ ok: true, mecano, deleted: true });
+    }
+
     return json({ ok: false, error: 'طريقة غير مدعومة' }, 405);
   },
 };
